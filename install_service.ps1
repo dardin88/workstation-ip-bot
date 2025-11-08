@@ -87,7 +87,8 @@ function Ensure-NssmInstalled {
                 break
             }
             catch {
-                Write-Warning "Download failed from $url: $_"
+                # Avoid parsing issues with colon after variable; use -f formatting
+                Write-Warning ("Download failed from {0}: {1}" -f $url, $_)
             }
         }
 
@@ -155,9 +156,9 @@ if ($nssmExe) {
 
     if ($DebugTest) {
         Write-Host "Running one-shot debug test (not as a service)..." -ForegroundColor Cyan
-        & $WinPSExe -ExecutionPolicy Bypass -NoProfile -File "$ScriptPath" -ConfigPath "$ConfigPath" -ErrorAction SilentlyContinue &
+        Start-Process -FilePath $WinPSExe -ArgumentList @('-ExecutionPolicy','Bypass','-NoProfile','-File',"$ScriptPath",'-ConfigPath',"$ConfigPath") -WindowStyle Hidden
         Start-Sleep -Seconds 3
-        Write-Host "(If no errors above, the script launched successfully.)" -ForegroundColor DarkGray
+        Write-Host "(Launched a background process for test; check Discord or logs.)" -ForegroundColor DarkGray
     }
 
     if ($NoServiceStart) {
