@@ -5,7 +5,9 @@ param(
     [string]$ServiceName = "IPChangeMonitor",
     [string]$DisplayName = "IP Change Discord Notifier",
     [string]$Description = "Monitors IP address changes and sends notifications to Discord",
-    [string]$ScriptPath = $null
+    [string]$ScriptPath = $null,
+    [switch]$NoServiceStart,
+    [switch]$DebugTest
 )
 
 # Check if running as Administrator
@@ -33,6 +35,14 @@ if (-not (Test-Path $ScriptPath)) {
 if (-not (Test-Path $ConfigPath)) {
     Write-Error "Config file not found: $ConfigPath"
     exit 1
+}
+
+# Resolve a stable Windows PowerShell 5.1 path for services
+$WinPSExe = Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe'
+if (-not (Test-Path $WinPSExe)) {
+    # Fallback to whatever "powershell.exe" resolves to
+    $psCmd = Get-Command powershell.exe -ErrorAction SilentlyContinue
+    $WinPSExe = if ($psCmd) { $psCmd.Source } else { 'powershell.exe' }
 }
 
 function Get-NssmExecutablePath {
@@ -131,18 +141,54 @@ if ($nssmExe) {
     }
     
     # Install the service
-    & $nssmExe install $ServiceName "powershell.exe" "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`" -ConfigPath `"$ConfigPath`""
+    & $nssmExe install $ServiceName $WinPSExe "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`" -ConfigPath `"$ConfigPath`""
     & $nssmExe set $ServiceName AppDirectory $PSScriptRoot
     & $nssmExe set $ServiceName DisplayName $DisplayName
     & $nssmExe set $ServiceName Description $Description
     & $nssmExe set $ServiceName Start SERVICE_AUTO_START
     & $nssmExe set $ServiceName AppStdout (Join-Path $PSScriptRoot "service_output.log")
     & $nssmExe set $ServiceName AppStderr (Join-Path $PSScriptRoot "service_error.log")
+    & $nssmExe set $ServiceName AppStopMethodSkip 0
+    & $nssmExe set $ServiceName AppThrottle 1500
     
     Write-Host "Service installed successfully!" -ForegroundColor Green
-    Write-Host "Starting service..." -ForegroundColor Yellow
-    Start-Service -Name $ServiceName
-    Write-Host "Service started!" -ForegroundColor Green
+
+    if ($DebugTest) {
+        Write-Host "Running one-shot debug test (not as a service)..." -ForegroundColor Cyan
+        & $WinPSExe -ExecutionPolicy Bypass -NoProfile -File "$ScriptPath" -ConfigPath "$ConfigPath" -ErrorAction SilentlyContinue &
+        Start-Sleep -Seconds 3
+        Write-Host "(If no errors above, the script launched successfully.)" -ForegroundColor DarkGray
+    }
+
+    if ($NoServiceStart) {
+        Write-Host "Skipping service start due to -NoServiceStart switch." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "Starting service..." -ForegroundColor Yellow
+        try {
+            Start-Service -Name $ServiceName -ErrorAction Stop
+            Write-Host "Service started!" -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "Failed to start service '$ServiceName'. $_"
+            $errLog = Join-Path $PSScriptRoot 'service_error.log'
+            $outLog = Join-Path $PSScriptRoot 'service_output.log'
+            if (Test-Path $errLog) {
+                Write-Host "Last 50 lines of service_error.log:" -ForegroundColor Yellow
+                Get-Content -Path $errLog -Tail 50 | ForEach-Object { Write-Host $_ }
+            }
+            if (Test-Path $outLog) {
+                Write-Host "Last 20 lines of service_output.log:" -ForegroundColor Yellow
+                Get-Content -Path $outLog -Tail 20 | ForEach-Object { Write-Host $_ }
+            }
+            Write-Host "Troubleshooting tips:" -ForegroundColor Cyan
+            Write-Host "  1. Run the script manually: $WinPSExe -ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`" -ConfigPath `"$ConfigPath`"" -ForegroundColor Cyan
+            Write-Host "  2. Verify 'config.json' is valid JSON and webhook reachable." -ForegroundColor Cyan
+            Write-Host "  3. Check Event Viewer → Windows Logs → Application for NSSM entries." -ForegroundColor Cyan
+            Write-Host "  4. Ensure antivirus/security software isn't blocking PowerShell." -ForegroundColor Cyan
+            Write-Host "  5. Re-run installer with -DebugTest to validate the script in foreground." -ForegroundColor Cyan
+        }
+    }
 }
 else {
     Write-Host "NSSM is unavailable. Creating scheduled task instead..." -ForegroundColor Yellow
@@ -158,7 +204,7 @@ else {
     }
     
     # Create the action
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
+    $action = New-ScheduledTaskAction -Execute $WinPSExe `
                                       -Argument "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$ScriptPath`" -ConfigPath `"$ConfigPath`""
     
     # Create the trigger (at startup)
