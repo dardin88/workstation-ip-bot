@@ -1,0 +1,227 @@
+# IP Change Notification Script for Discord
+# This script monitors IP address changes and sends notifications to Discord
+
+param(
+    [string]$ConfigPath = ".\config.json"
+)
+
+# Load configuration
+function Load-Config {
+    param([string]$Path)
+    
+    if (-not (Test-Path $Path)) {
+        Write-Error "Configuration file not found: $Path"
+        exit 1
+    }
+    
+    try {
+        $config = Get-Content $Path -Raw | ConvertFrom-Json
+        return $config
+    }
+    catch {
+        Write-Error "Failed to load configuration: $_"
+        exit 1
+    }
+}
+
+# Get current IP addresses (excluding loopback and link-local)
+function Get-CurrentIPAddresses {
+    $ipAddresses = @()
+    
+    $adapters = Get-NetIPAddress -AddressFamily IPv4 | 
+                Where-Object { 
+                    $_.IPAddress -notmatch '^127\.' -and 
+                    $_.IPAddress -notmatch '^169\.254\.' -and
+                    $_.AddressState -eq 'Preferred'
+                }
+    
+    foreach ($adapter in $adapters) {
+        $interface = Get-NetAdapter | Where-Object { $_.ifIndex -eq $adapter.InterfaceIndex }
+        
+        if ($interface.Status -eq 'Up') {
+            $ipAddresses += @{
+                InterfaceName = $interface.Name
+                IPAddress = $adapter.IPAddress
+                InterfaceAlias = $adapter.InterfaceAlias
+            }
+        }
+    }
+    
+    return $ipAddresses
+}
+
+# Send notification to Discord
+function Send-DiscordNotification {
+    param(
+        [string]$WebhookUrl,
+        [string]$Hostname,
+        [array]$OldIPs,
+        [array]$NewIPs,
+        [string]$ChangeType
+    )
+    
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    
+    # Build the message
+    $description = "**Hostname:** $Hostname`n**Time:** $timestamp`n`n"
+    
+    if ($ChangeType -eq "Initial") {
+        $description += "**Current IP Addresses:**`n"
+        foreach ($ip in $NewIPs) {
+            $description += "• **$($ip.InterfaceAlias)**: $($ip.IPAddress)`n"
+        }
+    }
+    else {
+        $description += "**IP Address Change Detected**`n`n"
+        
+        if ($OldIPs.Count -gt 0) {
+            $description += "**Previous IPs:**`n"
+            foreach ($ip in $OldIPs) {
+                $description += "• **$($ip.InterfaceAlias)**: $($ip.IPAddress)`n"
+            }
+            $description += "`n"
+        }
+        
+        $description += "**New IPs:**`n"
+        foreach ($ip in $NewIPs) {
+            $description += "• **$($ip.InterfaceAlias)**: $($ip.IPAddress)`n"
+        }
+    }
+    
+    # Create Discord embed
+    $embed = @{
+        title = if ($ChangeType -eq "Initial") { "🔵 IP Monitor Started" } else { "🔄 IP Address Changed" }
+        description = $description
+        color = if ($ChangeType -eq "Initial") { 3447003 } else { 15844367 }  # Blue for initial, Orange for change
+        footer = @{
+            text = "IP Change Monitor"
+        }
+        timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    }
+    
+    $payload = @{
+        embeds = @($embed)
+    } | ConvertTo-Json -Depth 10
+    
+    try {
+        Invoke-RestMethod -Uri $WebhookUrl -Method Post -Body $payload -ContentType 'application/json' | Out-Null
+        Write-Host "✓ Discord notification sent successfully" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Warning "Failed to send Discord notification: $_"
+        return $false
+    }
+}
+
+# Write log entry
+function Write-Log {
+    param(
+        [string]$Message,
+        [string]$LogPath
+    )
+    
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "[$timestamp] $Message"
+    
+    try {
+        Add-Content -Path $LogPath -Value $logMessage
+    }
+    catch {
+        Write-Warning "Failed to write to log file: $_"
+    }
+}
+
+# Compare IP address lists
+function Compare-IPAddresses {
+    param(
+        [array]$Old,
+        [array]$New
+    )
+    
+    if ($Old.Count -ne $New.Count) {
+        return $true
+    }
+    
+    $oldSorted = $Old | Sort-Object -Property IPAddress
+    $newSorted = $New | Sort-Object -Property IPAddress
+    
+    for ($i = 0; $i -lt $oldSorted.Count; $i++) {
+        if ($oldSorted[$i].IPAddress -ne $newSorted[$i].IPAddress) {
+            return $true
+        }
+    }
+    
+    return $false
+}
+
+# Main monitoring loop
+function Start-IPMonitoring {
+    param(
+        [string]$ConfigPath
+    )
+    
+    Write-Host "=== IP Change Notification Monitor ===" -ForegroundColor Cyan
+    Write-Host "Loading configuration..." -ForegroundColor Yellow
+    
+    $config = Load-Config -Path $ConfigPath
+    $hostname = $env:COMPUTERNAME
+    $previousIPs = @()
+    $isFirstRun = $true
+    
+    Write-Host "Configuration loaded successfully" -ForegroundColor Green
+    Write-Host "Hostname: $hostname" -ForegroundColor Cyan
+    Write-Host "Check interval: $($config.check_interval_seconds) seconds" -ForegroundColor Cyan
+    Write-Host "`nStarting monitoring..." -ForegroundColor Yellow
+    Write-Host "Press Ctrl+C to stop`n" -ForegroundColor Gray
+    
+    while ($true) {
+        try {
+            $currentIPs = Get-CurrentIPAddresses
+            
+            if ($isFirstRun) {
+                # Send initial notification
+                Write-Host "Sending initial notification..." -ForegroundColor Yellow
+                Write-Log -Message "Monitor started. Current IPs: $($currentIPs | ConvertTo-Json -Compress)" -LogPath $config.log_file
+                
+                $sent = Send-DiscordNotification -WebhookUrl $config.discord_webhook_url `
+                                                 -Hostname $hostname `
+                                                 -OldIPs @() `
+                                                 -NewIPs $currentIPs `
+                                                 -ChangeType "Initial"
+                
+                $previousIPs = $currentIPs
+                $isFirstRun = $false
+            }
+            elseif (Compare-IPAddresses -Old $previousIPs -New $currentIPs) {
+                # IP changed - send notification
+                Write-Host "`n⚠ IP Address change detected!" -ForegroundColor Yellow
+                Write-Log -Message "IP change detected. Old: $($previousIPs | ConvertTo-Json -Compress) | New: $($currentIPs | ConvertTo-Json -Compress)" -LogPath $config.log_file
+                
+                $sent = Send-DiscordNotification -WebhookUrl $config.discord_webhook_url `
+                                                 -Hostname $hostname `
+                                                 -OldIPs $previousIPs `
+                                                 -NewIPs $currentIPs `
+                                                 -ChangeType "Change"
+                
+                $previousIPs = $currentIPs
+            }
+            else {
+                # No change
+                $timestamp = Get-Date -Format "HH:mm:ss"
+                Write-Host "[$timestamp] No IP change detected" -ForegroundColor Gray
+            }
+            
+            # Wait before next check
+            Start-Sleep -Seconds $config.check_interval_seconds
+        }
+        catch {
+            Write-Error "Error in monitoring loop: $_"
+            Write-Log -Message "Error: $_" -LogPath $config.log_file
+            Start-Sleep -Seconds 10
+        }
+    }
+}
+
+# Start the monitoring
+Start-IPMonitoring -ConfigPath $ConfigPath

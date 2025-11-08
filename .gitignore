@@ -1,0 +1,21 @@
+# Configuration files with sensitive data
+config.json
+
+# Log files
+*.log
+
+# PowerShell temporary files
+*.ps1~
+
+# Windows Service files
+service_output.log
+service_error.log
+
+# Backup files
+*.bak
+*.backup
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
