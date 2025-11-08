@@ -35,27 +35,109 @@ if (-not (Test-Path $ConfigPath)) {
     exit 1
 }
 
-# Check if NSSM is available (recommended method)
-$nssmPath = Get-Command nssm.exe -ErrorAction SilentlyContinue
+function Get-NssmExecutablePath {
+    # Try PATH first
+    $cmd = Get-Command nssm.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Path }
 
-if ($nssmPath) {
+    # Try local bin folder
+    $localPath = Join-Path $PSScriptRoot "bin/nssm.exe"
+    if (Test-Path $localPath) { return $localPath }
+
+    return $null
+}
+
+function Ensure-NssmInstalled {
+    param(
+        [string]$DestinationDir
+    )
+    
+    $existing = Get-NssmExecutablePath
+    if ($existing) { return $existing }
+
+    Write-Host "NSSM not found. Attempting to download and install..." -ForegroundColor Yellow
+
+    $urls = @(
+        'https://nssm.cc/release/nssm-2.24.zip',
+        'https://github.com/hn256/nssm/releases/download/v2.24/nssm-2.24.zip'
+    )
+
+    $tempZip = Join-Path $env:TEMP ("nssm-" + [guid]::NewGuid().Guid + ".zip")
+    $tempDir = Join-Path $env:TEMP ("nssm-" + [guid]::NewGuid().Guid)
+
+    try {
+        New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+
+        $downloaded = $false
+        foreach ($url in $urls) {
+            try {
+                Write-Host "Downloading NSSM from: $url" -ForegroundColor Cyan
+                Invoke-WebRequest -Uri $url -OutFile $tempZip -UseBasicParsing -ErrorAction Stop
+                $downloaded = $true
+                break
+            }
+            catch {
+                Write-Warning "Download failed from $url: $_"
+            }
+        }
+
+        if (-not $downloaded) {
+            throw "Unable to download NSSM from all sources."
+        }
+
+        Expand-Archive -Path $tempZip -DestinationPath $tempDir -Force
+
+        $is64 = ((Get-CimInstance Win32_OperatingSystem).OSArchitecture -like '*64*')
+        $archFolder = if ($is64) { 'win64' } else { 'win32' }
+
+        $extractedPath = Get-ChildItem -Path $tempDir -Directory | Where-Object { $_.Name -like 'nssm-*' } | Select-Object -First 1
+        if (-not $extractedPath) { throw "Unexpected NSSM archive layout." }
+
+        $srcExe = Join-Path $extractedPath.FullName (Join-Path $archFolder 'nssm.exe')
+        if (-not (Test-Path $srcExe)) { throw "nssm.exe not found in extracted archive." }
+
+        New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
+        $dstExe = Join-Path $DestinationDir 'nssm.exe'
+        Copy-Item -Path $srcExe -Destination $dstExe -Force
+
+        Write-Host "NSSM installed to: $dstExe" -ForegroundColor Green
+        return $dstExe
+    }
+    catch {
+        Write-Warning "Automatic NSSM installation failed: $_"
+        return $null
+    }
+    finally {
+        # Cleanup temp files
+        try { if (Test-Path $tempZip) { Remove-Item $tempZip -Force } } catch {}
+        try { if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force } } catch {}
+    }
+}
+
+# Ensure NSSM is available (recommended method)
+$nssmExe = Get-NssmExecutablePath
+if (-not $nssmExe) {
+    $nssmExe = Ensure-NssmInstalled -DestinationDir (Join-Path $PSScriptRoot 'bin')
+}
+
+if ($nssmExe) {
     Write-Host "Installing service using NSSM..." -ForegroundColor Yellow
     
     # Remove existing service if it exists
     $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     if ($existingService) {
         Write-Host "Removing existing service..." -ForegroundColor Yellow
-        & nssm remove $ServiceName confirm
+        & $nssmExe remove $ServiceName confirm
     }
     
     # Install the service
-    & nssm install $ServiceName "powershell.exe" "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`" -ConfigPath `"$ConfigPath`""
-    & nssm set $ServiceName AppDirectory $PSScriptRoot
-    & nssm set $ServiceName DisplayName $DisplayName
-    & nssm set $ServiceName Description $Description
-    & nssm set $ServiceName Start SERVICE_AUTO_START
-    & nssm set $ServiceName AppStdout (Join-Path $PSScriptRoot "service_output.log")
-    & nssm set $ServiceName AppStderr (Join-Path $PSScriptRoot "service_error.log")
+    & $nssmExe install $ServiceName "powershell.exe" "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`" -ConfigPath `"$ConfigPath`""
+    & $nssmExe set $ServiceName AppDirectory $PSScriptRoot
+    & $nssmExe set $ServiceName DisplayName $DisplayName
+    & $nssmExe set $ServiceName Description $Description
+    & $nssmExe set $ServiceName Start SERVICE_AUTO_START
+    & $nssmExe set $ServiceName AppStdout (Join-Path $PSScriptRoot "service_output.log")
+    & $nssmExe set $ServiceName AppStderr (Join-Path $PSScriptRoot "service_error.log")
     
     Write-Host "Service installed successfully!" -ForegroundColor Green
     Write-Host "Starting service..." -ForegroundColor Yellow
@@ -63,7 +145,7 @@ if ($nssmPath) {
     Write-Host "Service started!" -ForegroundColor Green
 }
 else {
-    Write-Host "NSSM not found. Creating scheduled task instead..." -ForegroundColor Yellow
+    Write-Host "NSSM is unavailable. Creating scheduled task instead..." -ForegroundColor Yellow
     
     # Create a scheduled task as an alternative
     $taskName = $ServiceName
@@ -104,8 +186,7 @@ else {
     Start-ScheduledTask -TaskName $taskName
     
     Write-Host "Scheduled task created and started successfully!" -ForegroundColor Green
-    Write-Host "`nNote: For better service management, consider installing NSSM (Non-Sucking Service Manager)" -ForegroundColor Yellow
-    Write-Host "Download from: https://nssm.cc/download" -ForegroundColor Cyan
+    Write-Host "`nNote: For better service management, install NSSM when possible. This script will attempt it automatically on next run." -ForegroundColor Yellow
 }
 
 Write-Host "`n=== Installation Complete ===" -ForegroundColor Green
