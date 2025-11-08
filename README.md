@@ -1,6 +1,6 @@
 # IP Change Notification via Discord
 
-This project monitors IP address changes on Windows machines and sends notifications to Discord with both the hostname and IP address information.
+This project monitors IP address changes on both **Windows** and **Linux (Xubuntu 24.04)** machines and sends notifications to Discord with both the hostname and IP address information.
 
 ## Features
 
@@ -9,13 +9,22 @@ This project monitors IP address changes on Windows machines and sends notificat
 - 🔄 Runs continuously in the background
 - 📝 Logs all IP changes to a file
 - ⚙️ Easy to configure via JSON
-- 🚀 Can run as a Windows Service or Scheduled Task
+- 🚀 Can run as a Windows Service or Linux systemd service
 - 🎨 Beautiful Discord embeds with color coding
+- 🖥️ Cross-platform support (Windows & Linux)
 
 ## Prerequisites
 
+### Windows
 - Windows 10/11 (fully tested on Windows 11)
 - PowerShell 5.1 or higher (included in Windows 11)
+- Discord webhook URL
+
+### Linux (Xubuntu 24.04)
+- Xubuntu 24.04 or compatible Ubuntu-based distribution
+- Bash shell
+- `jq` (will be installed automatically by the install script)
+- `curl` (will be installed automatically by the install script)
 - Discord webhook URL
 
 ## Setup Instructions
@@ -49,12 +58,27 @@ Example `config.json`:
 
 Before installing as a service, test the script manually:
 
+#### Windows
+
 ```powershell
 # Open PowerShell and navigate to the script directory
 cd "C:\path\to\ip_change_notification_via_discord"
 
 # Run the script
 .\ip_monitor.ps1
+```
+
+#### Linux
+
+```bash
+# Open terminal and navigate to the script directory
+cd /path/to/ip_change_notification_via_discord
+
+# Make the script executable
+chmod +x ip_monitor.sh
+
+# Run the script
+./ip_monitor.sh
 ```
 
 You should see:
@@ -66,7 +90,9 @@ You should see:
 
 To run the monitor automatically on system startup:
 
-#### Option A: Using NSSM (Recommended)
+#### Windows
+
+##### Option A: Using NSSM (Recommended)
 
 1. Download NSSM from https://nssm.cc/download
 2. Extract and add to PATH or place in script directory
@@ -77,7 +103,7 @@ cd "C:\path\to\ip_change_notification_via_discord"
 .\install_service.ps1
 ```
 
-#### Option B: Using Scheduled Task (Alternative)
+##### Option B: Using Scheduled Task (Alternative)
 
 If NSSM is not available, the install script will automatically create a scheduled task instead.
 
@@ -87,9 +113,30 @@ cd "C:\path\to\ip_change_notification_via_discord"
 .\install_service.ps1
 ```
 
+#### Linux
+
+```bash
+# Open terminal and navigate to the script directory
+cd /path/to/ip_change_notification_via_discord
+
+# Make the install script executable
+chmod +x install_service.sh
+
+# Run the install script with sudo
+sudo ./install_service.sh
+```
+
+The script will automatically:
+- Install required dependencies (`jq` and `curl` if not present)
+- Create a systemd service
+- Enable the service to start on boot
+- Start the service immediately
+
 ### 5. Verify Installation
 
 Check if the service is running:
+
+#### Windows
 
 ```powershell
 # For NSSM service:
@@ -99,9 +146,21 @@ Get-Service -Name "IPChangeMonitor"
 Get-ScheduledTask -TaskName "IPChangeMonitor"
 ```
 
+#### Linux
+
+```bash
+# Check service status
+sudo systemctl status ip-change-monitor
+
+# View real-time logs
+sudo journalctl -u ip-change-monitor -f
+```
+
 ## Usage
 
 ### Manual Execution
+
+#### Windows
 
 Run the script directly in PowerShell:
 
@@ -115,7 +174,23 @@ With custom config path:
 .\ip_monitor.ps1 -ConfigPath "C:\custom\path\config.json"
 ```
 
+#### Linux
+
+Run the script directly in terminal:
+
+```bash
+./ip_monitor.sh
+```
+
+With custom config path:
+
+```bash
+./ip_monitor.sh /custom/path/config.json
+```
+
 ### Service Management
+
+#### Windows
 
 Start the service:
 ```powershell
@@ -138,14 +213,63 @@ Get-Service -Name "IPChangeMonitor"
 Get-ScheduledTask -TaskName "IPChangeMonitor"
 ```
 
+#### Linux
+
+Start the service:
+```bash
+sudo systemctl start ip-change-monitor
+```
+
+Stop the service:
+```bash
+sudo systemctl stop ip-change-monitor
+```
+
+Restart the service:
+```bash
+sudo systemctl restart ip-change-monitor
+```
+
+Check service status:
+```bash
+sudo systemctl status ip-change-monitor
+```
+
+View logs:
+```bash
+# View all logs
+sudo journalctl -u ip-change-monitor
+
+# Follow logs in real-time
+sudo journalctl -u ip-change-monitor -f
+
+# View last 50 lines
+sudo journalctl -u ip-change-monitor -n 50
+```
+
 ### Uninstall
 
 To remove the service:
+
+#### Windows
 
 ```powershell
 # Run PowerShell as Administrator
 cd "C:\path\to\ip_change_notification_via_discord"
 .\uninstall_service.ps1
+```
+
+#### Linux
+
+```bash
+# Navigate to script directory
+cd /path/to/ip_change_notification_via_discord
+
+# Make the uninstall script executable (if not already)
+chmod +x uninstall_service.sh
+
+# Run with sudo
+sudo ./uninstall_service.sh
 ```
 
 ## Discord Notification Format
@@ -174,11 +298,20 @@ Notifications include:
 
 ## Logs
 
-The script maintains two types of logs:
+The script maintains logs in different locations depending on the platform:
 
+### Windows
 1. **ip_monitor.log** - Application log with IP change history
 2. **service_output.log** - Service stdout (if running as NSSM service)
 3. **service_error.log** - Service stderr (if running as NSSM service)
+
+### Linux
+1. **ip_monitor.log** - Application log with IP change history (in script directory)
+2. **systemd journal** - Service logs accessible via `journalctl`
+   ```bash
+   # View all logs for the service
+   sudo journalctl -u ip-change-monitor
+   ```
 
 ## Troubleshooting
 
@@ -187,15 +320,23 @@ The script maintains two types of logs:
 - Verify the Discord webhook URL is correct
 - Check network connectivity
 - Review the log file for errors
+- **Linux**: Ensure `curl` and `jq` are installed
 
 ### Service won't start
 
+#### Windows
 - Ensure you ran the install script as Administrator
 - Check the service error log
 - Verify PowerShell execution policy allows scripts:
   ```powershell
   Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine
   ```
+
+#### Linux
+- Check service status: `sudo systemctl status ip-change-monitor`
+- View logs: `sudo journalctl -u ip-change-monitor -n 50`
+- Verify script has execute permissions: `chmod +x ip_monitor.sh`
+- Check if required packages are installed: `which jq curl`
 
 ### Multiple notifications for the same IP
 
@@ -207,7 +348,35 @@ The script maintains two types of logs:
 - Keep your Discord webhook URL private
 - The webhook URL is stored in plain text in `config.json`
 - Consider encrypting sensitive configuration if needed
-- The service runs with SYSTEM privileges when installed
+- **Windows**: The service runs with SYSTEM privileges when installed
+- **Linux**: The service runs with the user privileges of the script directory owner
+
+## Platform-Specific Notes
+
+### Windows
+- Uses PowerShell scripts (`.ps1` files)
+- Can run as Windows Service (via NSSM) or Scheduled Task
+- Tested on Windows 11
+
+### Linux (Xubuntu 24.04)
+- Uses Bash scripts (`.sh` files)
+- Runs as systemd service
+- Requires `jq` and `curl` (auto-installed by install script)
+- Uses `ip` command to detect network interfaces
+
+## File Structure
+
+```
+ip_change_notification_via_discord/
+├── config.json                 # Configuration file (shared)
+├── ip_monitor.ps1              # Windows PowerShell monitor script
+├── install_service.ps1         # Windows service installer
+├── uninstall_service.ps1       # Windows service uninstaller
+├── ip_monitor.sh               # Linux Bash monitor script
+├── install_service.sh          # Linux systemd service installer
+├── uninstall_service.sh        # Linux systemd service uninstaller
+└── README.md                   # This file
+```
 
 ## License
 
