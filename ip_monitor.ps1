@@ -68,7 +68,7 @@ function Send-DiscordNotification {
     if ($ChangeType -eq "Initial") {
         $description += "**Current IP Addresses:**`n"
         foreach ($ip in $NewIPs) {
-            $description += "• **$($ip.InterfaceAlias)**: $($ip.IPAddress)`n"
+            $description += "- **$($ip.InterfaceAlias)**: $($ip.IPAddress)`n"
         }
     }
     else {
@@ -77,14 +77,14 @@ function Send-DiscordNotification {
         if ($OldIPs.Count -gt 0) {
             $description += "**Previous IPs:**`n"
             foreach ($ip in $OldIPs) {
-                $description += "• **$($ip.InterfaceAlias)**: $($ip.IPAddress)`n"
+                $description += "- **$($ip.InterfaceAlias)**: $($ip.IPAddress)`n"
             }
             $description += "`n"
         }
         
         $description += "**New IPs:**`n"
         foreach ($ip in $NewIPs) {
-            $description += "• **$($ip.InterfaceAlias)**: $($ip.IPAddress)`n"
+            $description += "- **$($ip.InterfaceAlias)**: $($ip.IPAddress)`n"
         }
     }
     
@@ -101,10 +101,11 @@ function Send-DiscordNotification {
     
     $payload = @{
         embeds = @($embed)
-    } | ConvertTo-Json -Depth 10
+    } | ConvertTo-Json -Depth 10 -Compress
     
     try {
-        Invoke-RestMethod -Uri $WebhookUrl -Method Post -Body $payload -ContentType 'application/json' | Out-Null
+        $payloadBytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+        Invoke-RestMethod -Uri $WebhookUrl -Method Post -Body $payloadBytes -ContentType 'application/json; charset=utf-8' | Out-Null
         Write-Host "[OK] Discord notification sent successfully" -ForegroundColor Green
         return $true
     }
