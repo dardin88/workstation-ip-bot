@@ -90,7 +90,7 @@ function Send-DiscordNotification {
     
     # Create Discord embed
     $embed = @{
-        title = if ($ChangeType -eq "Initial") { "🔵 IP Monitor Started" } else { "🔄 IP Address Changed" }
+        title = if ($ChangeType -eq "Initial") { "[INFO] IP Monitor Started" } else { "[CHANGE] IP Address Changed" }
         description = $description
         color = if ($ChangeType -eq "Initial") { 3447003 } else { 15844367 }  # Blue for initial, Orange for change
         footer = @{
@@ -105,7 +105,7 @@ function Send-DiscordNotification {
     
     try {
         Invoke-RestMethod -Uri $WebhookUrl -Method Post -Body $payload -ContentType 'application/json' | Out-Null
-        Write-Host "✓ Discord notification sent successfully" -ForegroundColor Green
+        Write-Host "[OK] Discord notification sent successfully" -ForegroundColor Green
         return $true
     }
     catch {
@@ -195,7 +195,7 @@ function Start-IPMonitoring {
             }
             elseif (Compare-IPAddresses -Old $previousIPs -New $currentIPs) {
                 # IP changed - send notification
-                Write-Host "`n⚠ IP Address change detected!" -ForegroundColor Yellow
+                Write-Host "`n[WARNING] IP Address change detected!" -ForegroundColor Yellow
                 Write-Log -Message "IP change detected. Old: $($previousIPs | ConvertTo-Json -Compress) | New: $($currentIPs | ConvertTo-Json -Compress)" -LogPath $config.log_file
                 
                 $sent = Send-DiscordNotification -WebhookUrl $config.discord_webhook_url `
