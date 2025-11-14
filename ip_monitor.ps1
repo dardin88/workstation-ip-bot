@@ -5,6 +5,9 @@ param(
     [string]$ConfigPath = ".\config.json"
 )
 
+# File to store last notified IP
+$LastIPFile = ".last_notified_ip.json"
+
 # Load configuration
 function Load-Config {
     param([string]$Path)
@@ -12,7 +15,7 @@ function Load-Config {
     if (-not (Test-Path $Path)) {
         Write-Error "Configuration file not found: $Path"
         exit 1
-    }
+    fi
     
     try {
         $config = Get-Content $Path -Raw | ConvertFrom-Json
@@ -21,6 +24,33 @@ function Load-Config {
     catch {
         Write-Error "Failed to load configuration: $_"
         exit 1
+    }
+}
+
+# Load last notified IP from file
+function Load-LastNotifiedIP {
+    if (Test-Path $LastIPFile) {
+        try {
+            $lastIPs = Get-Content $LastIPFile -Raw | ConvertFrom-Json
+            return $lastIPs
+        }
+        catch {
+            Write-Warning "Failed to load last notified IP: $_"
+            return @()
+        }
+    }
+    return @()
+}
+
+# Save last notified IP to file
+function Save-LastNotifiedIP {
+    param([array]$IPs)
+    
+    try {
+        $IPs | ConvertTo-Json -Depth 10 | Set-Content -Path $LastIPFile
+    }
+    catch {
+        Write-Warning "Failed to save last notified IP: $_"
     }
 }
 
@@ -167,12 +197,19 @@ function Start-IPMonitoring {
     
     $config = Load-Config -Path $ConfigPath
     $hostname = $env:COMPUTERNAME
-    $previousIPs = @()
-    $isFirstRun = $true
+    $lastNotifiedIPs = Load-LastNotifiedIP
     
     Write-Host "Configuration loaded successfully" -ForegroundColor Green
     Write-Host "Hostname: $hostname" -ForegroundColor Cyan
     Write-Host "Check interval: $($config.check_interval_seconds) seconds" -ForegroundColor Cyan
+    
+    if ($lastNotifiedIPs.Count -gt 0) {
+        Write-Host "Last notified IP loaded from previous session" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "No previous IP notification found - will notify on first detection" -ForegroundColor Yellow
+    }
+    
     Write-Host "`nStarting monitoring..." -ForegroundColor Yellow
     Write-Host "Press Ctrl+C to stop`n" -ForegroundColor Gray
     
@@ -180,37 +217,43 @@ function Start-IPMonitoring {
         try {
             $currentIPs = Get-CurrentIPAddresses
             
-            if ($isFirstRun) {
-                # Send initial notification
-                Write-Host "Sending initial notification..." -ForegroundColor Yellow
-                Write-Log -Message "Monitor started. Current IPs: $($currentIPs | ConvertTo-Json -Compress)" -LogPath $config.log_file
-                
-                $sent = Send-DiscordNotification -WebhookUrl $config.discord_webhook_url `
-                                                 -Hostname $hostname `
-                                                 -OldIPs @() `
-                                                 -NewIPs $currentIPs `
-                                                 -ChangeType "Initial"
-                
-                $previousIPs = $currentIPs
-                $isFirstRun = $false
-            }
-            elseif (Compare-IPAddresses -Old $previousIPs -New $currentIPs) {
+            # Only notify if IPs are different from last notified IPs
+            if ($currentIPs.Count -gt 0 -and (Compare-IPAddresses -Old $lastNotifiedIPs -New $currentIPs)) {
                 # IP changed - send notification
-                Write-Host "`n[WARNING] IP Address change detected!" -ForegroundColor Yellow
-                Write-Log -Message "IP change detected. Old: $($previousIPs | ConvertTo-Json -Compress) | New: $($currentIPs | ConvertTo-Json -Compress)" -LogPath $config.log_file
+                Write-Host "`n[CHANGE] IP Address change detected!" -ForegroundColor Yellow
+                Write-Log -Message "IP change detected. Old: $($lastNotifiedIPs | ConvertTo-Json -Compress) | New: $($currentIPs | ConvertTo-Json -Compress)" -LogPath $config.log_file
                 
-                $sent = Send-DiscordNotification -WebhookUrl $config.discord_webhook_url `
-                                                 -Hostname $hostname `
-                                                 -OldIPs $previousIPs `
-                                                 -NewIPs $currentIPs `
-                                                 -ChangeType "Change"
+                if ($lastNotifiedIPs.Count -eq 0) {
+                    # First time notification
+                    Write-Host "Sending initial IP notification..." -ForegroundColor Yellow
+                    $sent = Send-DiscordNotification -WebhookUrl $config.discord_webhook_url `
+                                                     -Hostname $hostname `
+                                                     -OldIPs @() `
+                                                     -NewIPs $currentIPs `
+                                                     -ChangeType "Initial"
+                }
+                else {
+                    # IP actually changed
+                    $sent = Send-DiscordNotification -WebhookUrl $config.discord_webhook_url `
+                                                     -Hostname $hostname `
+                                                     -OldIPs $lastNotifiedIPs `
+                                                     -NewIPs $currentIPs `
+                                                     -ChangeType "Change"
+                }
                 
-                $previousIPs = $currentIPs
+                # Save the new IP as last notified
+                Save-LastNotifiedIP -IPs $currentIPs
+                $lastNotifiedIPs = $currentIPs
+            }
+            elseif ($currentIPs.Count -eq 0) {
+                # No network connection
+                $timestamp = Get-Date -Format "HH:mm:ss"
+                Write-Host "[$timestamp] No network connection detected" -ForegroundColor Gray
             }
             else {
-                # No change
+                # No change from last notification
                 $timestamp = Get-Date -Format "HH:mm:ss"
-                Write-Host "[$timestamp] No IP change detected" -ForegroundColor Gray
+                Write-Host "[$timestamp] IP unchanged (no notification needed)" -ForegroundColor Gray
             }
             
             # Wait before next check

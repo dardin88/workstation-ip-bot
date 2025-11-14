@@ -6,6 +6,9 @@
 # Default configuration path
 CONFIG_PATH="${1:-./config.json}"
 
+# File to store last notified IP
+LAST_IP_FILE=".last_notified_ip"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -34,6 +37,21 @@ load_config() {
         echo -e "${RED}Error: discord_webhook_url not found in configuration${NC}" >&2
         exit 1
     fi
+}
+
+# Load last notified IP from file
+load_last_notified_ip() {
+    if [ -f "$LAST_IP_FILE" ]; then
+        cat "$LAST_IP_FILE"
+    else
+        echo ""
+    fi
+}
+
+# Save last notified IP to file
+save_last_notified_ip() {
+    local ips="$1"
+    echo "$ips" > "$LAST_IP_FILE"
 }
 
 # Get current IP addresses (excluding loopback and link-local)
@@ -162,39 +180,50 @@ start_ip_monitoring() {
     load_config
     
     local hostname=$(hostname)
-    local previous_ips=""
-    local is_first_run=true
+    local last_notified_ips=$(load_last_notified_ip)
     
     echo -e "${GREEN}Configuration loaded successfully${NC}"
     echo -e "${CYAN}Hostname: $hostname${NC}"
     echo -e "${CYAN}Check interval: $CHECK_INTERVAL seconds${NC}"
+    
+    if [ -n "$last_notified_ips" ]; then
+        echo -e "${CYAN}Last notified IP loaded from previous session${NC}"
+    else
+        echo -e "${YELLOW}No previous IP notification found - will notify on first detection${NC}"
+    fi
+    
     echo -e "\n${YELLOW}Starting monitoring...${NC}"
     echo -e "${GRAY}Press Ctrl+C to stop${NC}\n"
     
     while true; do
         current_ips=$(get_current_ip_addresses)
         
-        if [ "$is_first_run" = true ]; then
-            # Send initial notification
-            echo -e "${YELLOW}Sending initial notification...${NC}"
-            write_log "Monitor started. Current IPs: $current_ips"
-            
-            send_discord_notification "$hostname" "" "$current_ips" "Initial"
-            
-            previous_ips="$current_ips"
-            is_first_run=false
-        elif [ "$previous_ips" != "$current_ips" ]; then
+        # Only notify if IPs are different from last notified IPs
+        if [ -n "$current_ips" ] && [ "$last_notified_ips" != "$current_ips" ]; then
             # IP changed - send notification
-            echo -e "\n${YELLOW}[WARNING] IP Address change detected!${NC}"
-            write_log "IP change detected. Old: $previous_ips | New: $current_ips"
+            echo -e "\n${YELLOW}[CHANGE] IP Address change detected!${NC}"
+            write_log "IP change detected. Old: $last_notified_ips | New: $current_ips"
             
-            send_discord_notification "$hostname" "$previous_ips" "$current_ips" "Change"
+            if [ -z "$last_notified_ips" ]; then
+                # First time notification
+                echo -e "${YELLOW}Sending initial IP notification...${NC}"
+                send_discord_notification "$hostname" "" "$current_ips" "Initial"
+            else
+                # IP actually changed
+                send_discord_notification "$hostname" "$last_notified_ips" "$current_ips" "Change"
+            fi
             
-            previous_ips="$current_ips"
-        else
-            # No change
+            # Save the new IP as last notified
+            save_last_notified_ip "$current_ips"
+            last_notified_ips="$current_ips"
+        elif [ -z "$current_ips" ]; then
+            # No network connection
             local timestamp=$(date '+%H:%M:%S')
-            echo -e "${GRAY}[$timestamp] No IP change detected${NC}"
+            echo -e "${GRAY}[$timestamp] No network connection detected${NC}"
+        else
+            # No change from last notification
+            local timestamp=$(date '+%H:%M:%S')
+            echo -e "${GRAY}[$timestamp] IP unchanged (no notification needed)${NC}"
         fi
         
         # Wait before next check
