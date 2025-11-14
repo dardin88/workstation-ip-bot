@@ -15,7 +15,7 @@ function Load-Config {
     if (-not (Test-Path $Path)) {
         Write-Error "Configuration file not found: $Path"
         exit 1
-    fi
+    }
     
     try {
         $config = Get-Content $Path -Raw | ConvertFrom-Json
