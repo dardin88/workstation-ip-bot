@@ -138,11 +138,68 @@ if ($nssmExe) {
     $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     if ($existingService) {
         Write-Host "Removing existing service..." -ForegroundColor Yellow
-        & $nssmExe remove $ServiceName confirm
+        
+        # Stop the service first if it's running
+        if ($existingService.Status -eq 'Running') {
+            Write-Host "Stopping running service..." -ForegroundColor Yellow
+            Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+        }
+        
+        # Remove the service
+        & $nssmExe remove $ServiceName confirm | Out-Null
+        
+        # Wait for Windows to fully remove the service (critical on Windows)
+        Write-Host "Waiting for service deletion to complete..." -ForegroundColor Yellow
+        $maxWait = 30
+        $waited = 0
+        while ((Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) -and ($waited -lt $maxWait)) {
+            Start-Sleep -Seconds 1
+            $waited++
+        }
+        
+        if ($waited -ge $maxWait) {
+            Write-Warning "Service still exists after $maxWait seconds. You may need to restart your computer."
+            Write-Host "Press Enter to continue anyway, or Ctrl+C to abort..." -ForegroundColor Yellow
+            Read-Host
+        }
+        else {
+            Write-Host "Service removed successfully." -ForegroundColor Green
+            # Extra buffer time to ensure Windows releases all handles
+            Start-Sleep -Seconds 2
+        }
     }
     
-    # Install the service
-    & $nssmExe install $ServiceName $WinPSExe "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`" -ConfigPath `"$ConfigPath`""
+    # Install the service with retry logic
+    Write-Host "Creating new service..." -ForegroundColor Yellow
+    $installAttempts = 0
+    $maxAttempts = 3
+    $installed = $false
+    
+    while (-not $installed -and $installAttempts -lt $maxAttempts) {
+        $installAttempts++
+        
+        $result = & $nssmExe install $ServiceName $WinPSExe "-ExecutionPolicy Bypass -NoProfile -File `"$ScriptPath`" -ConfigPath `"$ConfigPath`"" 2>&1
+        
+        if ($LASTEXITCODE -eq 0) {
+            $installed = $true
+            Write-Host "Service created successfully." -ForegroundColor Green
+        }
+        elseif ($result -like "*marked for deletion*" -or $result -like "*segnato per l'eliminazione*") {
+            if ($installAttempts -lt $maxAttempts) {
+                Write-Host "Service still marked for deletion. Waiting 5 seconds before retry $installAttempts/$maxAttempts..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 5
+            }
+            else {
+                Write-Error "Failed to create service after $maxAttempts attempts. Please restart your computer and try again."
+                exit 1
+            }
+        }
+        else {
+            Write-Error "Failed to install service: $result"
+            exit 1
+        }
+    }
     & $nssmExe set $ServiceName AppDirectory $PSScriptRoot
     & $nssmExe set $ServiceName DisplayName $DisplayName
     & $nssmExe set $ServiceName Description $Description
