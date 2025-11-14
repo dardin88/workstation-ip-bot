@@ -159,9 +159,22 @@ if ($nssmExe) {
         }
         
         if ($waited -ge $maxWait) {
-            Write-Warning "Service still exists after $maxWait seconds. You may need to restart your computer."
-            Write-Host "Press Enter to continue anyway, or Ctrl+C to abort..." -ForegroundColor Yellow
-            Read-Host
+            Write-Warning "Service '$ServiceName' is stuck in deletion state."
+            Write-Host "`nOption 1: Restart your computer (RECOMMENDED)" -ForegroundColor Yellow
+            Write-Host "Option 2: Use an alternative service name to bypass the issue" -ForegroundColor Yellow
+            Write-Host "`nPress 'A' to use Alternative name, or any other key to abort (then restart PC)..." -ForegroundColor Cyan
+            $choice = Read-Host
+            
+            if ($choice -eq 'A' -or $choice -eq 'a') {
+                $ServiceName = "IPChangeMonitor2"
+                $DisplayName = "IP Change Discord Notifier (v2)"
+                Write-Host "Using alternative service name: $ServiceName" -ForegroundColor Green
+                Start-Sleep -Seconds 2
+            }
+            else {
+                Write-Host "Installation aborted. Please restart your computer and run this script again." -ForegroundColor Yellow
+                exit 0
+            }
         }
         else {
             Write-Host "Service removed successfully." -ForegroundColor Green
@@ -187,12 +200,28 @@ if ($nssmExe) {
         }
         elseif ($result -like "*marked for deletion*" -or $result -like "*segnato per l'eliminazione*") {
             if ($installAttempts -lt $maxAttempts) {
-                Write-Host "Service still marked for deletion. Waiting 5 seconds before retry $installAttempts/$maxAttempts..." -ForegroundColor Yellow
-                Start-Sleep -Seconds 5
+                Write-Host "Service still marked for deletion. Waiting 10 seconds before retry $installAttempts/$maxAttempts..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 10
             }
             else {
-                Write-Error "Failed to create service after $maxAttempts attempts. Please restart your computer and try again."
-                exit 1
+                Write-Host "`n" -ForegroundColor Yellow
+                Write-Warning "The service name '$ServiceName' is permanently stuck in Windows."
+                Write-Host "`nYou have two options:" -ForegroundColor Yellow
+                Write-Host "1. RESTART your computer (clears the stuck service)" -ForegroundColor Cyan
+                Write-Host "2. Use a DIFFERENT service name (workaround)" -ForegroundColor Cyan
+                Write-Host "`nPress 'D' to use Different name, or any other key to exit..." -ForegroundColor Yellow
+                $choice = Read-Host
+                
+                if ($choice -eq 'D' -or $choice -eq 'd') {
+                    $ServiceName = "IPMonitor" + (Get-Random -Minimum 100 -Maximum 999)
+                    Write-Host "Trying with new service name: $ServiceName" -ForegroundColor Green
+                    $installAttempts = 0
+                    continue
+                }
+                else {
+                    Write-Host "Installation aborted. Please restart your computer." -ForegroundColor Yellow
+                    exit 1
+                }
             }
         }
         else {
