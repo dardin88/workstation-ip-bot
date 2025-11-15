@@ -174,11 +174,13 @@ function Compare-IPAddresses {
         return $true
     }
     
-    $oldSorted = $Old | Sort-Object -Property IPAddress
-    $newSorted = $New | Sort-Object -Property IPAddress
+    # Sort by both interface and IP for proper comparison
+    $oldSorted = $Old | Sort-Object -Property InterfaceAlias, IPAddress
+    $newSorted = $New | Sort-Object -Property InterfaceAlias, IPAddress
     
     for ($i = 0; $i -lt $oldSorted.Count; $i++) {
-        if ($oldSorted[$i].IPAddress -ne $newSorted[$i].IPAddress) {
+        if ($oldSorted[$i].InterfaceAlias -ne $newSorted[$i].InterfaceAlias -or 
+            $oldSorted[$i].IPAddress -ne $newSorted[$i].IPAddress) {
             return $true
         }
     }
