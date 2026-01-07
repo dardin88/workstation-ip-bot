@@ -68,7 +68,12 @@ function Get-CurrentIPAddresses {
     foreach ($adapter in $adapters) {
         $interface = Get-NetAdapter | Where-Object { $_.ifIndex -eq $adapter.InterfaceIndex }
         
-        if ($interface.Status -eq 'Up') {
+        # Filter: Only track Ethernet interfaces, exclude WSL and other virtual adapters
+        if ($interface.Status -eq 'Up' -and 
+            $interface.InterfaceDescription -match 'Ethernet' -and
+            $interface.Name -notmatch 'WSL' -and
+            $interface.InterfaceDescription -notmatch 'WSL' -and
+            $interface.InterfaceDescription -notmatch 'vEthernet') {
             $ipAddresses += @{
                 InterfaceName = $interface.Name
                 IPAddress = $adapter.IPAddress
