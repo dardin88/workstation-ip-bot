@@ -70,7 +70,7 @@ function Get-CurrentIPAddresses {
         
         # Filter: Only track physical Ethernet interfaces, exclude virtual adapters
         if ($interface.Status -eq 'Up' -and 
-            $interface.Name -match 'Ethernet') {
+            $interface.Name -eq 'Ethernet') {
             $ipAddresses += @{
                 InterfaceName = $interface.Name
                 IPAddress = $adapter.IPAddress
